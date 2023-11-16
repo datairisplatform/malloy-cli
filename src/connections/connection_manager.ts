@@ -88,6 +88,7 @@ const createSnowflakeConnection = async (
         database: connectionConfig.database,
         warehouse: connectionConfig.warehouse,
       },
+      queryOptions: {rowLimit: rowLimit},
     });
     return connection;
   } catch (error) {
