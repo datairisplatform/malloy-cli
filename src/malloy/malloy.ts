@@ -28,7 +28,10 @@ import {
   Runtime,
 } from '@malloydata/malloy';
 import url, {fileURLToPath as fileURLToPath} from 'node:url';
-import {connectionManager} from '../connections/connection_manager';
+import {
+  CLIConnectionFactory,
+  connectionManager,
+} from '../connections/connection_manager';
 import {
   QueryOptionsType,
   RunOrCompileOptions,
@@ -92,7 +95,15 @@ export async function runMalloy(
       }
     } else query = await modelMaterializer.loadFinalQuery();
 
-    const sql = await query.getSQL();
+    // !!HACK!! (should eventually be fixed in malloy grammar)
+    // this eliminates the errors related to intervals in snowflake <-> malloy
+    //
+    // As an example consider the sql generated for Snowflake to run a query like this
+    // SELECT customer_id FROM purchases WHERE order_date >= CURRENT_DATE - INTERVAL '(1) DAY'
+    // is invalid in snowflake dialect and we would rather need to change it to
+    // SELECT customer_id FROM purchases WHERE order_date >= CURRENT_DATE - INTERVAL '1 DAY'
+    let sql = await query.getSQL();
+    sql = sql.replace(/'\((\d+)\) ([a-zA-Z]+)'/g, "'$1 $2'");
     json['sql'] = sql.trim();
 
     if (options.compileOnly) {
@@ -100,6 +111,21 @@ export async function runMalloy(
       resultsLog.sql(sql);
 
       return JSON.stringify(json);
+    }
+    const configs = await connectionManager.getAllConnectionConfigs();
+
+    let bokksu_config;
+    for (const config of configs) {
+      if (config.name === 'bokksu') {
+        bokksu_config = config;
+      }
+    }
+    if (bokksu_config) {
+      const factory = new CLIConnectionFactory();
+      const conn = await factory.getConnectionForConfig(bokksu_config);
+      const results = await conn.runSQL(sql);
+      resultsLog.result(JSON.stringify(results, null, 2));
+      return JSON.stringify(results);
     }
 
     const results = await query.run();
